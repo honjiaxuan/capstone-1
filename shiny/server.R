@@ -60,9 +60,6 @@ shinyServer(function(input, output)
    # Return indication that user can start (after large nGrams file has loaded)
    output$message <- renderText("(the engine is now operational)")
    
-   # Processing time
-   #output$timing <- renderText({paste(sprintf("total processing time: %5.2f msecs",1000*lapseTime))})
-   
    # Return the predicted word and text input to be displayed to the user
    output$predictedWord <- renderText(predictWord())
    output$enteredWord   <- renderText({input$text}, quoted = FALSE)
