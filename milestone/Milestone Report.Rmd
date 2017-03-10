@@ -1,0 +1,466 @@
+---
+title: "Capstone - Milestone Report"
+author: "Erwin Vorwerk"
+date: "18-2-2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Report purpose
+
+The objective of the Data Science Capstone Project is to build a model that can predict the next word given an input word/sentence fragment. For this purpose a large set of twitter, news and blog data is available on https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip. During this project we will focus on the English data subsets.
+
+The purpose of this report is to elaborate on the first steps in this project, which deals with initial loading and exploration of the available data. Purpose of this step is to better understand the data and to define next steps and to ascertain what could be done in future research work.
+
+## Downloading the source data from the web
+
+First step is to load the data from the source and to unzip it in the working directory. The code is set up to only download the data if it is not yet available in the working directory:
+
+```{r load}
+# Tweak OSX to prevent R processes to choke on memory allocation (bug)
+# options(mc.cores = 1)
+
+# Change to working directory
+#setwd("~/Documents/Coursera/capstone")
+setwd("D:/science/capstone")
+
+# Load data file from the internet
+url  <- "http://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip"
+if (!file.exists("coursera-swiftkey.zip"))
+  {
+    # Get the file from 
+    download.file(url, destfile="coursera-swiftkey.zip")
+  
+    # Then unzip the file to get source files 
+   unzip("coursera-swiftkey.zip", overwrite=TRUE, junkpaths=TRUE)
+  }
+```
+
+## Load data into the R environment & initial analysis
+
+You can also embed plots, for example:
+
+```{r initial}
+# Set the stage
+require(stringr)
+
+# Global settings
+data_path  = './data/final'
+language   = "english"
+locale     = "en_US"
+words      = "en"
+extension  = ".txt"
+sampleSize = 250000
+
+# Initialize variables
+locale_path <- paste(data_path, "/", locale, "/", sep = "")
+
+# Source file names
+file_blogs <- paste(locale_path, locale,".blogs", extension, sep ="")
+file_news <- paste(locale_path, locale,".news", extension, sep="")
+file_twitter <- paste(locale_path, locale,".twitter", extension, sep="")
+
+# Target file names
+file_news_cleansed <- paste(locale_path, locale,".news.cleansed", ".RData", sep="")
+file_blogs_cleansed <- paste(locale_path, locale,".blogs.cleansed", ".RData", sep="")
+file_twitter_cleansed <- paste(locale_path, locale,".twitter.cleansed", ".RData", sep="")
+
+#
+# Create function: rmNonAlphabet
+#
+# Purpose
+#         Get rid of non-alphanumeric characters in a string
+# Parameters
+#         str: string to be processed
+# Note
+#         created by code_musketeer, Jul 31, 2015 @ stackoverflow.com
+#
+rmNonAlphabet <- function(str) {
+  words <- unlist(strsplit(str, " "))
+  in.alphabet <- grep(words, pattern = "[a-z|0-9]", ignore.case = T)
+  nice.str <- paste(words[in.alphabet], collapse = " ")
+  nice.str
+}
+
+#
+# Create function: read_content
+#
+# Purpose
+#               Read from a data source file
+# Paramaters
+#               fileName : fully qualified path & filename of file to be read
+#
+read_content <- function(fileName)
+{
+  #
+  # Initialise storage variable
+  #
+  n_lines <- ""
+
+  #
+  # Only read if file exists
+  #
+  if(file.exists(fileName))
+  {
+    fileHandle <- file(fileName,"r")
+    n_lines <- readLines(fileHandle, encoding="UTF-8", skipNul = TRUE)
+    close(fileHandle)
+  }
+   # Ensure only valid characters are returned
+   # n_lines <- rmNonAlphabet(n_lines)
+   
+   return(n_lines)
+}
+
+# And read the content of the English language files into variables if needed
+
+if (!exists("lines_blogs"))   {lines_blogs   <- read_content(file_blogs)}
+if (!exists("lines_twitter")) {lines_twitter <- read_content(file_twitter)}
+if (!exists("lines_news"))    {lines_news    <- read_content(file_news)}
+
+# And perform initial analyses on the information just read in
+
+# Start with simply looking at the number of lines
+length(lines_blogs)
+length(lines_twitter)
+length(lines_news)
+```
+
+## Take a sample
+
+To save resources (cpu, memory) during further processing, we will take a sample of the data just read into the R environment. We will be using a fixed sample size.
+
+```{r sample}
+
+# Set the sample size
+sampleSize = 50000
+
+# Intialize seeder
+set.seed(1357)
+
+# Take three samples
+lines_blogs   <- sample(lines_blogs,   size=sampleSize, replace=TRUE)
+lines_news    <- sample(lines_news,    size=sampleSize, replace=TRUE)
+lines_twitter <- sample(lines_twitter, size=sampleSize, replace=TRUE)
+
+```
+
+## Cleanse the data
+
+After loading the data into the R environment, we need to execute a number of cleansing activities to ensure that unwanted data (like punctuation) is removed from the Corpus data. This ensures that the data is made consistent hence prepared for proper processing in the next step, the tokenization of data. For this we leverage the functionality of the 'ts' package. The cleansed data/variables are saved into the working directory
+
+The cleansing steps will only performed if no cleansed/data variables exist in the working directory. This is to save valuable processing time during the development iterations.
+
+```{r cleanse_news}
+
+# Load required libraries
+require(tm)         # Text Mining Library
+require(RWeka)      # N-gram processes
+require(wordcloud)  # Create wordclouds from ngram results
+require(SnowballC)  # Snowball stemmers
+
+#
+# Create function: cleanse_data
+#
+# Purpose
+#         clean the Corpus to ensure a consistent data set
+# Parameters
+#         corpData: the data set (Corpus) to be transformed
+#
+cleanse_data <- function(corpData)
+{
+    #
+    # Using besproke functions from the Text Mining library (tm) to do content cleansing
+    #
+    transformedCorp <- tm_map(corpData, removeWords, stopwords(words))        # remove unwanted words
+  
+    #
+    # Using bespoke functions from the Text Mining Library (tm) to do mechanical cleansing
+    #
+    transformedCorp <- tm_map(transformedCorp, removeNumbers)                    # get rid of numbers
+    transformedCorp <- tm_map(transformedCorp, stripWhitespace)                  # get rid of whitespaces
+    transformedCorp <- tm_map(transformedCorp, removePunctuation)                # get rid of interpunction
+    transformedCorp <- tm_map(transformedCorp, content_transformer(tolower))     # convert all to lowercase   
+    transformedCorp <- tm_map(transformedCorp, PlainTextDocument)                # convert all to plain text
+    transformedCorp <- tm_map(transformedCorp, stemDocument)                     # stem the text (https://en.wikipedia.org/wiki/Stemming)
+    
+    #
+    # Ensure result returned is of datatype Corpus
+    #
+    transformedCorp <- Corpus(VectorSource(transformedCorp))  
+    
+    #
+    # Return result
+    #
+    return(transformedCorp)
+}
+
+# NEWS
+# 
+# Convert, cleanse'news' data, then remove orginal data from environment
+#
+
+# First check if it was already done
+if (!file.exists(file_news_cleansed))
+  {
+   # Cleanse data
+   corpus_news          <- Corpus(VectorSource(lines_news))
+   corpus_news_cleansed <- cleanse_data(corpus_news)
+   rm(corpus_news, lines_news)
+
+   # Now write the cleansed data to disk for later use
+   save(corpus_news_cleansed, file=file_news_cleansed)
+   rm(corpus_news_cleansed)
+  }
+
+```
+
+```{r cleanse_blogs}
+
+# BLOGS
+# 
+# Convert, cleanse 'blogs' data, then remove orginal data from environment
+#
+
+# First check if it was already done
+if (!file.exists(file_blogs_cleansed))
+  {
+   # Cleanse data
+   corpus_blogs          <- Corpus(VectorSource(lines_blogs))
+   corpus_blogs_cleansed <- cleanse_data(corpus_blogs)
+   rm(corpus_blogs, lines_blogs)
+
+   # Now write the cleansed data to disk for later use
+   save(corpus_blogs_cleansed, file=file_blogs_cleansed)
+   rm(corpus_blogs_cleansed)
+  }
+```
+
+```{r cleanse_twitter}
+
+# TWITTER
+# 
+# Convert, cleanse 'twitter' data, then remove orginal data from environment
+#
+
+# First check if it was already done
+if (!file.exists(file_twitter_cleansed))
+  {
+   # Cleanse data
+   corpus_twitter          <- Corpus(VectorSource(lines_twitter))
+   rm(lines_twitter)
+   corpus_twitter_cleansed <- cleanse_data(corpus_twitter)
+   rm(corpus_twitter)
+
+   # Now write the cleansed data to disk for later use
+   save(corpus_twitter_cleansed, file=file_twitter_cleansed)
+
+  }
+```
+
+## Tokenization
+
+Now that the 'news', 'blogs' and 'twitter' type of data has been cleansed and harmonized, the data sets are ready for additional exploratory analyses. 1-gram, 2-gram and 3-gram tokenizers will be created, where the RWeka library will be leveraged for its machine learning functions for data mining (https://cran.r-project.org/web/packages/RWeka/RWeka.pdf). Also we will use the 'tm' (text mining) package of R, which contains many useful functions for this purpose.
+
+In addition, a function is created to quickly establish the most frequently used words (or combinations thereof) in the data sets.
+
+```{r tokenize_frequency}
+
+# Ensure the packages are present
+require(RWeka)
+require(tm)
+
+# Define bespoke Tokenizer functions to create 1-gram, 2-gram and 4-gram
+uniGramTokenizer <- function(x) NGramTokenizer(x, Weka_control(min = 1, max = 1))
+biGramTokenizer  <- function(x) NGramTokenizer(x, Weka_control(min = 2, max = 2))
+triGramTokenizer <- function(x) NGramTokenizer(x, Weka_control(min = 3, max = 3))
+
+#
+# Create function: measureFrequency
+#
+# Purpose
+#         Establish the frequencies for terms
+# Parameters
+#         ngramTDM: Term Document Matrix containing ngram data
+#
+measureFrequency <- function(ngramTDM){
+  freqTerms <- findFreqTerms(ngramTDM, lowfreq = 50)
+  freq <- rowSums(as.matrix(ngramTDM[freqTerms,]))
+  freq <- data.frame(word=names(freq), freq=freq)
+  freq[order(-freq$freq), ][1:30, ]
+}
+```
+
+## Zooming in on 'news'
+
+First we will load the cleansed and prepared dataset into our workspace, and then we will execute the tokenization functions on the 'news' dataset. Next, we can have a look at the word that occur most often in the 'news' dataset. 
+
+```{r frequencies_news_load}
+
+# Get the preprocessed data
+load(file_news_cleansed)
+
+```
+
+```{r frequencies_news_one_gram}
+
+# Tokenization of 'news' data & cleanup - 1-gram
+uni_gram_matrix_news <- TermDocumentMatrix(corpus_news_cleansed, control = list(tokenize = uniGramTokenizer))
+freq_uni_news <- measureFrequency(uni_gram_matrix_news)
+rm(uni_gram_matrix_news)
+
+```
+
+
+```{r frequencies_news_two_gram}
+
+# Tokenization of 'news' data & cleanup - 2-gram
+bi_gram_matrix_news <- TermDocumentMatrix(corpus_news_cleansed, control = list(tokenize = biGramTokenizer )) 
+freq_bi_news  <- measureFrequency( bi_gram_matrix_news)
+rm(bi_gram_matrix_news)
+
+```
+
+```{r frequencies_news_three_gram}
+
+# Tokenization of 'news' data & cleanup - 3-gram
+tri_gram_matrix_news <- TermDocumentMatrix(corpus_news_cleansed, control = list(tokenize = triGramTokenizer))
+freq_tri_news <- measureFrequency(tri_gram_matrix_news)
+rm(tri_gram_matrix_news)
+rm(corpus_news)
+
+```
+
+```{r frequencies_news_plot}
+
+# And plot the charts
+barplot(freq_uni_news$freq,names.arg=freq_uni_news$word, cex.names=0.7, main="'news' unigram frequencies", col="blue")
+
+barplot(freq_bi_news$freq,names.arg=freq_bi_news$word, cex.names=0.7, main="'news' bigram frequencies", col="red")
+
+barplot(freq_tri_news$freq,names.arg=freq_tri_news$word, cex.names=0.7, main="'news' trigram frequencies", col="black")
+
+```
+
+## Zooming in on 'blogs'
+
+Next we will load the cleansed and prepared dataset into our workspace, and then we will execute the tokenization functions on the 'blogs' dataset. Next, we can have a look at the word that occur most often in the 'blogs' dataset. 
+
+```{r frequencies_blogs_load}
+
+# Get the preprocessed data
+load(file_blogs_cleansed)
+```
+
+
+```{r frequencies_blogs_onegram}
+
+# Tokenization of 'blogs' data & cleanup - 1-gram
+uni_gram_matrix_blogs <- TermDocumentMatrix(corpus_blogs_cleansed, control = list(tokenize = uniGramTokenizer))
+freq_uni_blogs <- measureFrequency(uni_gram_matrix_blogs)
+rm(uni_gram_matrix_blogs)
+
+```
+
+```{r frequencies_blogs_twogram}
+
+# Tokenization of 'blogs' data & cleanup - 2-gram
+bi_gram_matrix_blogs <- TermDocumentMatrix(corpus_blogs_cleansed, control = list(tokenize = biGramTokenizer )) 
+freq_bi_blogs  <- measureFrequency( bi_gram_matrix_blogs)
+rm(bi_gram_matrix_blogs)
+
+```
+
+
+```{r frequencies_blogs_threegram}
+
+# Tokenization of 'blogs' data & cleanup - 3-gram
+tri_gram_matrix_blogs <- TermDocumentMatrix(corpus_blogs_cleansed, control = list(tokenize = triGramTokenizer))
+freq_tri_blogs <- measureFrequency(tri_gram_matrix_blogs)
+rm(tri_gram_matrix_blogs)
+rm(corpus_blogs)
+
+```
+
+```{r frequencies_blogs_plot}
+
+# And plot the charts
+barplot(freq_uni_blogs$freq,names.arg=freq_uni_blogs$word, cex.names=0.7, main="'blogs' unigram frequencies", col="blue")
+
+barplot(freq_bi_blogs$freq,names.arg=freq_bi_blogs$word, cex.names=0.7, main="'blogs' bigram frequencies", col="red")
+
+barplot(freq_tri_blogs$freq,names.arg=freq_tri_blogs$word, cex.names=0.7, main="'blogs' trigram frequencies", col="black")
+
+# Clean up
+rm(uni_gram_matrix_blogs, bi_gram_matrix_blogs, tri_gram_matrix_blogs)
+
+```
+
+## Zooming in on 'twitter'
+
+Finally we will load the cleansed and prepared dataset into our workspace, and then we will execute the tokenization functions on the 'twitter' dataset. Next, we can have a look at the word that occur most often in the 'twitter' dataset. 
+
+```{r frequencies_twitter_load}
+
+# Get the preprocessed data
+load(file_twitter_cleansed)
+```
+
+
+```{r frequencies_twitter_onegram}
+
+# Tokenization of 'twitter' data & cleanup - 1-gram
+uni_gram_matrix_twitter <- TermDocumentMatrix(corpus_twitter_cleansed, control = list(tokenize = uniGramTokenizer))
+freq_uni_twitter <- measureFrequency(uni_gram_matrix_twitter)
+rm(uni_gram_matrix_twitter)
+
+```
+
+```{r frequencies_twitter_twogram}
+
+# Tokenization of 'twitter' data & cleanup - 2-gram
+bi_gram_matrix_twitter <- TermDocumentMatrix(corpus_twitter_cleansed, control = list(tokenize = biGramTokenizer )) 
+freq_bi_twitter  <- measureFrequency( bi_gram_matrix_twitter)
+rm(bi_gram_matrix_twitter)
+
+```
+
+
+```{r frequencies_twitter_threegram}
+
+# Tokenization of 'twitter' data & cleanup - 3-gram
+tri_gram_matrix_twitter <- TermDocumentMatrix(corpus_twitter_cleansed, control = list(tokenize = triGramTokenizer))
+freq_tri_twitter <- measureFrequency(tri_gram_matrix_twitter)
+rm(tri_gram_matrix_twitter)
+rm(corpus_twitter)
+
+```
+
+```{r frequencies_twitter_plot}
+
+# And plot the charts
+barplot(freq_uni_twitter$freq,names.arg=freq_uni_twitter$word, cex.names=0.7, main="'twitter' unigram frequencies", col="blue")
+
+barplot(freq_bi_twitter$freq,names.arg=freq_bi_twitter$word, cex.names=0.7, main="'twitter' bigram frequencies", col="red")
+
+barplot(freq_tri_twitter$freq,names.arg=freq_tri_twitter$word, cex.names=0.7, main="'twitter' trigram frequencies", col="black")
+
+# Clean up
+rm(uni_gram_matrix_twitter, bi_gram_matrix_twitter, tri_gram_matrix_twitter)
+
+```
+
+
+## Looking ahead
+
+In the next steps of the project a predicition algorithm will be constructed. This algorithm will be embedded into a Shiny app, in which text can be entered and the predicition results presented. The following items will be taken into account: 
+
+- Text input on Shiny application for entering sentence
+- When the user has completed the sentence, the application app predicts the 'next word' 
+- The 'tm' package will be used for processing data
+- The 'Katz's back-off model' will be used to to predict (https://en.wikipedia.org/wiki/Katz's_back-off_model)
+- To predict I will use 2-gram, 3-gram or 4-gram datasets
+- Look into optimizing resource usage (memory, cpu)
